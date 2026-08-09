@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdbool.h> 
+#include <stdlib.h>
 #include <dotgeno.h>
 
 typedef enum {
@@ -8,19 +9,19 @@ typedef enum {
 } geno_file_type;
 
 typedef struct {
-	char* snp:
-	char* ind:
-	char* geno:
+	char* snp;
+	char* ind;
+	char* geno;
 	geno_file_type geno_type;
 } admixio_file_trio;
 
 typedef union {
-	egn_file_reader* egn:
+	egn_file_reader* egn;
 	pam_file_reader* pam;
 } geno_reader_base;
 
 typedef union {
-	egn_file_writer* egn:
+	egn_file_writer* egn;
 	pam_file_writer* pam;
 } geno_writer_base;
 
@@ -35,8 +36,8 @@ typedef struct {
 } geno_writer;
 
 typedef struct {
-	snp_data* snp:
-	ind_data* ind:
+	snp_data* snp;
+	ind_data* ind;
 	geno_reader geno;
 } admixio_data_trio;
 
