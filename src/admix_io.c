@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <dotgeno.h>
 
+#define MAGIC_BYTES_SIZE 4
+
 typedef enum {
     EGN,
 	PAM
@@ -42,15 +44,15 @@ typedef struct {
 } admixio_data_trio;
 
 geno_file_type get_geno_file_type(char* filename) {
-	char magic_bytes[4];
+	char magic_bytes[MAGIC_BYTES_SIZE];
 	FILE* fp = fopen(filename, "r");
 	if(fp == NULL) {
 		fprintf(stderr, "ERROR: cannot open file %s\n", filename);
 		exit(EXIT_FAILURE);
 	}
-	size_t n_bytes_read = fread(magic_bytes, 1, 4, fp);
-	// can only be a PAM if file size is greater than 4 bytes
-	if(n_bytes_read == 4) {
+	size_t n_bytes_read = fread(magic_bytes, 1, MAGIC_BYTES_SIZE, fp);
+	// can only be a PAM if file size is greater than 4 bytes (MAGIC_BYTES_SIZE)
+	if(n_bytes_read == MAGIC_BYTES_SIZE) {
 		if(strcmp(magic_bytes, "GENO") == 0) {
 			return PAM;
 		}
@@ -64,6 +66,7 @@ geno_file_type get_geno_file_type(char* filename) {
 		return EGN;
 	} else {
 		fprintf(stderr, "ERROR: file %s is neither a PACKEDANCESTRYMAP nor an EIGENSTRAT file\n", filename);
+		exit(EXIT_FAILURE);
 	}
 }
 
