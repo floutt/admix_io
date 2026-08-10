@@ -88,3 +88,19 @@ admixio_data_trio admixio_data_init(admixio_file_trio file_info) {
 	out_adt.geno = rdr;
 	return out_adt;
 }
+
+/* individual filter functions */
+// BLAH
+// BLAH
+
+/* snp filter functions */
+// BLAH
+// BLAH
+
+/* merge multiple filters for ind and snp respectively */
+// BLAH
+// BLAH
+
+/* now filter based on the linked lists */
+// BLAH
+// BLAH
