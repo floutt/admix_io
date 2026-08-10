@@ -14,17 +14,16 @@ typedef struct {
 	char* snp;
 	char* ind;
 	char* geno;
-	geno_file_type geno_type;
 } admixio_file_trio;
 
 typedef union {
-	egn_file_reader* egn;
-	pam_file_reader* pam;
+	egn_file_reader egn;
+	pam_file_reader pam;
 } geno_reader_base;
 
 typedef union {
-	egn_file_writer* egn;
-	pam_file_writer* pam;
+	egn_file_writer egn;
+	pam_file_writer pam;
 } geno_writer_base;
 
 typedef struct {
@@ -38,13 +37,14 @@ typedef struct {
 } geno_writer;
 
 typedef struct {
-	snp_data* snp;
-	ind_data* ind;
+	snp_data snp;
+	ind_data ind;
 	geno_reader geno;
 } admixio_data_trio;
 
 geno_file_type get_geno_file_type(char* filename) {
-	char magic_bytes[MAGIC_BYTES_SIZE];
+	char magic_bytes[MAGIC_BYTES_SIZE + 1];
+	magic_bytes[MAGIC_BYTES_SIZE] = '\0';
 	FILE* fp = fopen(filename, "r");
 	if(fp == NULL) {
 		fprintf(stderr, "ERROR: cannot open file %s\n", filename);
@@ -71,5 +71,20 @@ geno_file_type get_geno_file_type(char* filename) {
 }
 
 admixio_data_trio admixio_data_init(admixio_file_trio file_info) {
-/// BLAH BLAH
+	admixio_data_trio out_adt;
+	out_adt.snp = read_snp_file(file_info.snp);
+	out_adt.ind = read_ind_file(file_info.ind);
+
+	geno_reader rdr;
+	rdr.geno_type = get_geno_file_type(file_info.geno);
+	switch(rdr.geno_type) {
+		case PAM:
+			rdr.reader.pam = pam_file_reader_init(file_info.geno, &out_adt.snp, &out_adt.ind);
+			break;
+		case EGN:
+			rdr.reader.egn = egn_file_reader_init(file_info.geno, &out_adt.snp, &out_adt.ind);
+			break;
+	}
+	out_adt.geno = rdr;
+	return out_adt;
 }
