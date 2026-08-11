@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <stdbool.h> 
 #include <stdlib.h>
+#include <sys/queue.h>
 #include <dotgeno.h>
+#include "khash.h"
 
 #define MAGIC_BYTES_SIZE 4
 
@@ -42,32 +44,42 @@ typedef struct {
 	geno_reader geno;
 } admixio_data_trio;
 
-geno_file_type get_geno_file_type(char* filename) {
-	char magic_bytes[MAGIC_BYTES_SIZE + 1];
-	magic_bytes[MAGIC_BYTES_SIZE] = '\0';
-	FILE* fp = fopen(filename, "r");
-	if(fp == NULL) {
-		fprintf(stderr, "ERROR: cannot open file %s\n", filename);
-		exit(EXIT_FAILURE);
-	}
-	size_t n_bytes_read = fread(magic_bytes, 1, MAGIC_BYTES_SIZE, fp);
-	// can only be a PAM if file size is greater than 4 bytes (MAGIC_BYTES_SIZE)
-	if(n_bytes_read == MAGIC_BYTES_SIZE) {
-		if(strcmp(magic_bytes, "GENO") == 0) {
-			return PAM;
-		}
-	}
-	// now check if it is an EGN if not a PAM
-	bool is_egn = true;
-	for(size_t i = 0; i < n_bytes_read; i++) {
-		is_egn = is_egn && (magic_bytes[i] == '0' || magic_bytes[i] == '1' || magic_bytes[i] == '2' || magic_bytes[i] == '9');
-	}
-	if(is_egn) {
-		return EGN;
-	} else {
-		fprintf(stderr, "ERROR: file %s is neither a PACKEDANCESTRYMAP nor an EIGENSTRAT file\n", filename);
-		exit(EXIT_FAILURE);
-	}
+/* hash table setup! */
+/*! @brief comparison function for ind_idx hash. For use with khash.h */
+#define ind_idx_equal(a, b) ((strcmp((a).ind_id, (b).ind_id) == 0) && strcmp((a).ind_pop, (b).ind_pop) == 0)
+
+/* hash table stuff */
+/**
+ *  @brief Hash function for ind_idx for use with khash.h, based on the djb2 hash function
+ *
+ *  @param[in] ind_idx_struct ind_idx structure to be hashed
+ *
+ *  @return hash value of type khint_t
+ */
+static inline khint_t hash_ind_idx(ind_idx ind_idx_struct) {
+        // String linker for .ind hashing
+        int IND_LINK_LEN = 20;
+        char IND_LINK[21] = "gzvrEy55bcEN0gqRqvL6";
+
+        khint_t hash = 5381;
+        
+        // first string
+        int len = strlen(ind_idx_struct.ind_id);
+        for(int i = 0; i < len; i++) {
+                hash = ((hash << 5) + hash) + ind_idx_struct.ind_id[i];
+        }
+        
+        // linker string
+        for(int i = 0; i < IND_LINK_LEN; i++) {
+                hash = ((hash << 5) + hash) + IND_LINK[i];
+        }
+
+        // second string
+        len = strlen(ind_idx_struct.ind_pop);
+        for(int i = 0; i < len; i++) {
+                hash = ((hash << 5) + hash) + ind_idx_struct.ind_pop[i];
+        }
+        return hash;
 }
 
 admixio_data_trio admixio_data_init(admixio_file_trio file_info) {
@@ -89,18 +101,6 @@ admixio_data_trio admixio_data_init(admixio_file_trio file_info) {
 	return out_adt;
 }
 
-/* individual filter functions */
-// BLAH
-// BLAH
-
-/* snp filter functions */
-// BLAH
-// BLAH
-
-/* merge multiple filters for ind and snp respectively */
-// BLAH
-// BLAH
-
-/* now filter based on the linked lists */
+/* now filter merge based on the linked lists */
 // BLAH
 // BLAH
