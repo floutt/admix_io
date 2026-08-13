@@ -137,36 +137,37 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 	// get first elements
 	struct idx_node** cur_elems = (struct idx_node**)malloc(ila->length * sizeof(struct idx_node*));
 	for(size_t i = 0; i < ila->length; i++) {
-		cur_elems[i] = STAILQ_FIRST(ila->elems[i]);
+		cur_elems[i] = TAILQ_FIRST(ila->elems[i]);
 	}
-
+	
 	// fill in output linked list with elements of first list
 	struct idx_node* tmp_node;
-	STAILQ_FOREACH(tmp_node, ila->elems[0], nodes) {
+	TAILQ_FOREACH(tmp_node, ila->elems[0], nodes) {
 		struct idx_node* idn = (struct idx_node*)malloc(sizeof(struct idx_node));
 		idn->idx = tmp_node->idx;
-		STAILQ_INSERT_TAIL(head_out, idn, nodes);
+		TAILQ_INSERT_TAIL(head_out, idn, nodes);
 	}
-	struct idx_node* cur_elem_out = STAILQ_FIRST(head_out);
+
+	struct idx_node* cur_elem_out = TAILQ_FIRST(head_out);
 
 	while(true) {
 		bool end_while = false;  // change value to exit while loop	
 		if(all_equal(cur_elems, ila->length)) {
+			cnt++;
+			cur_elem_out = TAILQ_NEXT(cur_elem_out, nodes);
 			for(size_t i = 0; i < ila->length; i++) {
-				cnt++;
-				cur_elems[i] = STAILQ_NEXT(cur_elems[i], nodes);
+				cur_elems[i] = TAILQ_NEXT(cur_elems[i], nodes);
 				if(cur_elems[i] == NULL) {
-					if(i == 0) { break; }
-					struct idx_node* cur = cur_elem_out;
-					struct idx_node* nxt;
-					while(cur) {
-						cur = STAILQ_NEXT(cur, nodes);
-						if(cur == NULL) { break; }
-						nxt = STAILQ_NEXT(cur, nodes);
-						STAILQ_REMOVE(head_out, cur, idx_node, nodes);
-						free(cur);
-						cur = nxt;
+					if(i == 0) { end_while = true; break; }
+					struct idx_node* old_val;
+					while(cur_elem_out) {
+						old_val = cur_elem_out;
+						TAILQ_REMOVE(head_out, cur_elem_out, nodes);
+						cur_elem_out = TAILQ_NEXT(cur_elem_out, nodes);
+						free(old_val);
 					}
+					end_while = true;
+					break;
 				}
 			}
 		} else {
@@ -174,8 +175,13 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 			for(size_t i = 0; i < ila->length; i++) {
 				if(i == max_i) { continue; }
 				if(cur_elems[i]->idx == cur_elems[max_i]->idx) { continue; }
-				if(i == 0) { STAILQ_REMOVE(head_out, cur_elem_out, idx_node, nodes); }
-				cur_elems[i] = STAILQ_NEXT(cur_elems[i], nodes);
+				if(i == 0) {
+					TAILQ_REMOVE(head_out, cur_elem_out, nodes);
+					struct idx_node* old_val = cur_elem_out;
+					cur_elem_out = TAILQ_NEXT(cur_elem_out, nodes);
+					free(old_val);
+				}
+				cur_elems[i] = TAILQ_NEXT(cur_elems[i], nodes);
 				if(cur_elems[i] == NULL) {
 					free_idx_list(head_out);
 					end_while = true;
@@ -189,4 +195,30 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 		}
 	}
 	return cnt;
+}
+
+int main(int argc, char* argv[]) {
+	idx_list_arr ila = init_idx_list_arr(argc-1);
+	struct idx_head ihd[10];
+	for(int i = 1; i < argc; i++) {
+		TAILQ_INIT(&ihd[i-1]); 
+		char* elem_str = strdup(argv[i]);
+		char* num_str = strtok(elem_str, ",");
+		while(num_str) {
+			struct idx_node* in = (struct idx_node*)malloc(sizeof(struct idx_node));
+			in->idx = (size_t)atoi(num_str);
+			TAILQ_INSERT_TAIL(&ihd[i-1], in, nodes);
+			num_str = strtok(NULL, ",");
+		}
+		ila.elems[i-1] = &ihd[i-1];
+		free(elem_str);
+	}
+	struct idx_head head_out;
+	TAILQ_INIT(&head_out);
+	size_t len = intersect_idx(&ila, &head_out);
+	struct idx_node* tmp_node;
+	printf("List of size %zu:\n", len);
+	TAILQ_FOREACH(tmp_node, &head_out, nodes) {
+		printf("\t%zu\n", tmp_node->idx);
+	}
 }
