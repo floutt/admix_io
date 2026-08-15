@@ -147,7 +147,6 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 		idn->idx = tmp_node->idx;
 		TAILQ_INSERT_TAIL(head_out, idn, nodes);
 	}
-
 	struct idx_node* cur_elem_out = TAILQ_FIRST(head_out);
 
 	while(true) {
@@ -157,7 +156,7 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 			cur_elem_out = TAILQ_NEXT(cur_elem_out, nodes);
 			for(size_t i = 0; i < ila->length; i++) {
 				cur_elems[i] = TAILQ_NEXT(cur_elems[i], nodes);
-				if(cur_elems[i] == NULL) {
+				if((cur_elems[i] == NULL)) {
 					if(i == 0) { end_while = true; break; }
 					struct idx_node* old_val;
 					while(cur_elem_out) {
@@ -183,9 +182,14 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 				}
 				cur_elems[i] = TAILQ_NEXT(cur_elems[i], nodes);
 				if(cur_elems[i] == NULL) {
-					free_idx_list(head_out);
-					end_while = true;
-					break;
+					if(i == 0) {
+						end_while = true;
+						break;
+					} else {
+						free_idx_list(head_out);
+						end_while = true;
+						break;
+					}
 				}
 			}
 		}
