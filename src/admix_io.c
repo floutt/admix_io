@@ -225,4 +225,9 @@ int main(int argc, char* argv[]) {
 	TAILQ_FOREACH(tmp_node, &head_out, nodes) {
 		printf("\t%zu\n", tmp_node->idx);
 	}
+	for(int i = 1; i < argc; i++) {
+		free_idx_list(&ihd[i-1]);
+	}
+	free_idx_list(&head_out);
+	free_idx_list_arr(&ila);
 }
