@@ -2,10 +2,14 @@
 #include <stdbool.h> 
 #include <stdlib.h>
 #include <sys/queue.h>
+#include <getopt.h>
 #include <dotgeno.h>
-#include "khash.h"
 
 #define MAGIC_BYTES_SIZE 4
+#define STR_BUF_EXTRA 6
+
+bool HASH_CHECK = true;
+bool IS_VERBOSE = false;
 
 typedef enum {
     EGN,
@@ -69,6 +73,7 @@ geno_file_type get_geno_file_type(char* filename) {
 		exit(EXIT_FAILURE);
 	}
 	size_t n_bytes_read = fread(magic_bytes, 1, MAGIC_BYTES_SIZE, fp);
+	fclose(fp);
 	// can only be a PAM if file size is greater than 4 bytes (MAGIC_BYTES_SIZE)
 	if(n_bytes_read == MAGIC_BYTES_SIZE) {
 		if(strcmp(magic_bytes, "GENO") == 0) {
@@ -88,23 +93,34 @@ geno_file_type get_geno_file_type(char* filename) {
 	}
 }
 
-admixio_data_trio admixio_data_init(admixio_file_trio file_info) {
+admixio_data_trio admixio_data_init(admixio_file_trio aft) {
 	admixio_data_trio out_adt;
-	out_adt.snp = read_snp_file(file_info.snp);
-	out_adt.ind = read_ind_file(file_info.ind);
+	out_adt.snp = read_snp_file(aft.snp);
+	out_adt.ind = read_ind_file(aft.ind);
 
 	geno_reader rdr;
-	rdr.geno_type = get_geno_file_type(file_info.geno);
+	rdr.geno_type = get_geno_file_type(aft.geno);
 	switch(rdr.geno_type) {
 		case PAM:
-			rdr.reader.pam = pam_file_reader_init(file_info.geno, &out_adt.snp, &out_adt.ind);
+			rdr.reader.pam = pam_file_reader_init(aft.geno, &out_adt.snp, &out_adt.ind);
 			break;
 		case EGN:
-			rdr.reader.egn = egn_file_reader_init(file_info.geno, &out_adt.snp, &out_adt.ind);
+			rdr.reader.egn = egn_file_reader_init(aft.geno, &out_adt.snp, &out_adt.ind);
 			break;
 	}
 	out_adt.geno = rdr;
 	return out_adt;
+}
+
+void close_geno_reader(geno_reader* gr) {
+	switch(gr->geno_type) {
+		case PAM:
+			close_pam_file_reader(&gr->reader.pam);
+			break;
+		case EGN:
+			close_egn_file_reader(&gr->reader.egn);
+			break;
+	}
 }
 
 size_t get_max_index(struct idx_node** arr, size_t length) {
@@ -201,33 +217,220 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 	return cnt;
 }
 
-int main(int argc, char* argv[]) {
-	idx_list_arr ila = init_idx_list_arr(argc-1);
-	struct idx_head ihd[10];
-	for(int i = 1; i < argc; i++) {
-		TAILQ_INIT(&ihd[i-1]); 
-		char* elem_str = strdup(argv[i]);
-		char* num_str = strtok(elem_str, ",");
-		while(num_str) {
-			struct idx_node* in = (struct idx_node*)malloc(sizeof(struct idx_node));
-			in->idx = (size_t)atoi(num_str);
-			TAILQ_INSERT_TAIL(&ihd[i-1], in, nodes);
-			num_str = strtok(NULL, ",");
+char** str_split(char* str, char delim, size_t* n_elems) {
+	size_t str_len = strlen(str);
+	size_t nc_buf = str_len > 0;
+	// get num chars
+	for(size_t i = 0; i < str_len; i++) {
+		if(str[i] == delim) {
+			nc_buf += 1;
 		}
-		ila.elems[i-1] = &ihd[i-1];
-		free(elem_str);
 	}
-	struct idx_head head_out;
-	TAILQ_INIT(&head_out);
-	size_t len = intersect_idx(&ila, &head_out);
-	struct idx_node* tmp_node;
-	printf("List of size %zu:\n", len);
-	TAILQ_FOREACH(tmp_node, &head_out, nodes) {
-		printf("\t%zu\n", tmp_node->idx);
+	size_t* col_lens = (size_t*)malloc(nc_buf * sizeof(size_t)); 
+	size_t cur_len = 0;
+	size_t cur_col = 0;
+	for(size_t i = 0; i < str_len; i++) {
+		if(!(str[i] == delim)) {
+			cur_len += 1;
+		} else {
+			col_lens[cur_col] = cur_len;
+			cur_len = 0;
+			cur_col += 1;
+		}
 	}
-	for(int i = 1; i < argc; i++) {
-		free_idx_list(&ihd[i-1]);
+	col_lens[cur_col] = cur_len;
+	char** out_arr = (char**)malloc(nc_buf * sizeof(char*));
+	for(size_t i = 0; i < nc_buf; i++) {
+		out_arr[i] = (char*)malloc((col_lens[i] + 1) * sizeof(char));
+		out_arr[i][col_lens[i]] = '\0';
 	}
-	free_idx_list(&head_out);
-	free_idx_list_arr(&ila);
+	size_t subber = 0;
+	cur_col = 0;
+	for(size_t i = 0; i < str_len; i++) {
+		if((str[i] == delim)) {
+			cur_col += 1;
+			subber = i + 1;
+		} else {
+			out_arr[cur_col][i - subber] = str[i];
+		}
+	}
+	free(col_lens);
+	*n_elems = nc_buf;
+	return out_arr;
+}
+
+size_t num_lines(char* filename) {
+	FILE* fp = fopen(filename, "r");
+	if(fp == NULL) {
+		fprintf(stderr, "ERROR: could not open file %s!\n", filename);
+		exit(EXIT_FAILURE);
+	}
+	size_t n = 0;
+	char ch;
+	while ((ch = fgetc(fp)) != EOF) {
+		if (ch == '\n') { n++; }
+	}
+	fclose(fp);
+	return n;
+}
+
+void print_help() {
+	printf("Future help message here\n");
+}
+
+int main(int argc, char* argv[]) {
+	static struct option long_options[] = {
+		{"help",           no_argument,       NULL, 'h'},
+		{"prefix",         required_argument, NULL, 'p'},
+		{"geno",           required_argument, NULL, 'P'},
+		{"snp",            required_argument, NULL, 's'},
+		{"ind",            required_argument, NULL, 'i'},
+		{"keep",           required_argument, NULL, 'k'},
+		{"extract",        required_argument, NULL, 'e'},
+		{"out",            required_argument, NULL, 'o'},
+		{"ignore-hash",    no_argument,       0,    300},
+		{"verbose",        no_argument,       0,    500},
+		{0,                0,                 0,      0}
+	};
+	
+	admixio_file_trio aft;
+	aft.ind = NULL;
+	aft.snp = NULL;
+	aft.geno = NULL;
+	char* out_prefix = NULL;
+	char* ind_filt_file = NULL;
+	while(1) {
+		int c = getopt_long(argc, argv, "hp:P:s:i:k:e:o:", long_options, NULL);
+		if(c == -1) { break; }
+		switch(c) {
+			case 'h':
+				print_help();
+				exit(EXIT_SUCCESS);
+			case 'p':
+				if(aft.geno) {
+					fprintf(stderr, "ERROR: geno files already provided!");
+					exit(EXIT_FAILURE);
+				}
+				if(aft.snp) {
+					fprintf(stderr, "ERROR: SNP files already provided!");
+					exit(EXIT_FAILURE);
+				}
+				if(aft.ind) {
+					fprintf(stderr, "ERROR: Individual files already provided!");
+					exit(EXIT_FAILURE);
+				}
+				aft.snp = (char*)malloc(sizeof(char) * (strlen(optarg) + STR_BUF_EXTRA));
+				aft.ind = (char*)malloc(sizeof(char) * (strlen(optarg) + STR_BUF_EXTRA));
+				aft.geno = (char*)malloc(sizeof(char) * (strlen(optarg) + STR_BUF_EXTRA));
+				sprintf(aft.snp, "%s.snp", optarg);
+				sprintf(aft.ind, "%s.ind", optarg);
+				sprintf(aft.geno, "%s.geno", optarg);
+				break;
+			case 'P':
+				if(aft.geno) {
+					fprintf(stderr, "ERROR: Multiple sets of geno files provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				aft.geno = strdup(optarg);
+				break;
+			case 's':
+				if(aft.snp) {
+					fprintf(stderr, "ERROR: Multiple sets of SNP files provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				aft.snp = strdup(optarg);
+				break;
+			case 'i':
+				if(aft.ind) {
+					fprintf(stderr, "ERROR: Multiple sets of individual files provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				aft.ind = strdup(optarg);
+				break;
+			case 'o':
+				if(out_prefix) {
+					fprintf(stderr, "ERROR: output prefix of '%s' has already been specified!\n", out_prefix);
+					exit(EXIT_FAILURE);
+				} else {
+					out_prefix = optarg;
+				}
+				break;
+			case 'e':
+				if(ind_filt_file) {
+					fprintf(stderr, "ERROR: extract file of '%s' has already been specified!\n", ind_filt_file);
+					exit(EXIT_FAILURE);
+				}
+				ind_filt_file = optarg;
+				break;
+			case 300:
+				HASH_CHECK = false;
+				break;
+			case 500:
+				IS_VERBOSE = true;
+				break;
+			case '?':
+				break;
+			default:
+				abort();
+		}
+	}
+	
+	admixio_data_trio adt = admixio_data_init(aft);
+	struct idx_head ind_idx_head;
+	struct ind_idx_head missing_ind_idx;
+	if(ind_filt_file) {
+		TAILQ_INIT(&ind_idx_head);
+		TAILQ_INIT(&missing_ind_idx);
+		size_t n_elems = num_lines(ind_filt_file);
+		char** ind_ids = (char**)malloc(sizeof(char*) * n_elems);
+		char** ind_pops = (char**)malloc(sizeof(char*) * n_elems);
+		FILE* fp = fopen(ind_filt_file, "r");
+		char* line = NULL;
+		size_t len = 0;
+		ssize_t read;
+		size_t i = 0;
+		while ((read = getline(&line, &len, fp)) != -1) {
+			line[read - 1] = '\0';
+			size_t num_cols;
+			char** elems = str_split(line, '\t', &num_cols);
+			if(num_cols != 2) {
+				fprintf(stderr, "ERROR: invalid number of columns in extract file %s. Expected two columns per line\n", ind_filt_file);
+				exit(EXIT_FAILURE);
+			}
+			ind_ids[i] = strdup(elems[0]);
+			ind_pops[i] = strdup(elems[1]);
+			free(elems[0]);
+			free(elems[1]);
+			free(elems);
+			i++;
+		}
+		free(line);
+		fclose(fp);
+		get_multiple_ind_idx(&adt.ind, ind_ids, ind_pops, n_elems, &ind_idx_head, &missing_ind_idx);
+		if(IS_VERBOSE) {
+			if(!TAILQ_EMPTY(&missing_ind_idx)) { 
+				struct ind_idx_node* tmp_node;
+				printf("The following individuals were not found in %s:\n", aft.ind);
+				TAILQ_FOREACH(tmp_node, &missing_ind_idx, nodes) {
+					printf("\tind: %s, pop: %s\n", tmp_node->iidx->ind_id, tmp_node->iidx->ind_pop);
+				}
+			}
+		}
+		for(size_t idx = 0; idx < n_elems; idx++) {
+			free(ind_ids[idx]);
+			free(ind_pops[idx]);
+		}
+		free(ind_ids);
+		free(ind_pops);
+	}
+
+	// free
+	free(aft.ind);
+	free(aft.snp);
+	free(aft.geno);
+	free_snp_data(&adt.snp);
+	free_ind_data(&adt.ind);
+	close_geno_reader(&adt.geno);
+	if(ind_filt_file) { free_idx_list(&ind_idx_head); }
+	if(ind_filt_file) { free_ind_idx_list(&missing_ind_idx); }
 }
