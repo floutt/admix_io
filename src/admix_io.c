@@ -112,6 +112,50 @@ admixio_data_trio admixio_data_init(admixio_file_trio aft) {
 	return out_adt;
 }
 
+geno_writer writer_init(geno_file_type geno_type, char* filename, snp_data* snp_info, ind_data* ind_info) {
+	geno_writer wtr;
+	wtr.geno_type = geno_type;
+	switch(geno_type) {
+		case PAM:
+			wtr.writer.pam = pam_file_writer_init(filename, snp_info, ind_info);
+			write_pam_header(&wtr.writer.pam, snp_info, ind_info);
+			break;
+		case EGN:
+			wtr.writer.egn = egn_file_writer_init(filename, snp_info, ind_info);
+			break;
+	}
+	return wtr;
+}
+
+void write_record(geno_writer* wtr, uint8_t* dosages) {
+	switch(wtr->geno_type) {
+		case PAM:
+			write_pam_record(&wtr->writer.pam, dosages);
+			break;
+		case EGN:
+			write_egn_record(&wtr->writer.egn, dosages);
+			break;
+	}
+}
+
+uint8_t* read_record(geno_reader* rdr) {
+	switch(rdr->geno_type) {
+		case PAM:
+			return read_pam_record(&rdr->reader.pam);
+		case EGN:
+			return read_egn_record(&rdr->reader.egn);
+	}
+}
+
+short goto_var(geno_reader* rdr, snp_data* snp_info, char* var_name) {
+	switch(rdr->geno_type) {
+		case PAM:
+			return goto_var_pam(&rdr->reader.pam, snp_info, var_name);
+		case EGN:
+			return goto_var_egn(&rdr->reader.egn, snp_info, var_name);
+	}
+}
+
 void close_geno_reader(geno_reader* gr) {
 	switch(gr->geno_type) {
 		case PAM:
@@ -119,6 +163,17 @@ void close_geno_reader(geno_reader* gr) {
 			break;
 		case EGN:
 			close_egn_file_reader(&gr->reader.egn);
+			break;
+	}
+}
+
+void close_geno_writer(geno_writer* gr) {
+	switch(gr->geno_type) {
+		case PAM:
+			close_pam_file_writer(&gr->writer.pam);
+			break;
+		case EGN:
+			close_egn_file_writer(&gr->writer.egn);
 			break;
 	}
 }
@@ -288,6 +343,7 @@ int main(int argc, char* argv[]) {
 		{"keep",           required_argument, NULL, 'k'},
 		{"extract",        required_argument, NULL, 'e'},
 		{"out",            required_argument, NULL, 'o'},
+		{"output_type",    required_argument, NULL, 't'},
 		{"ignore-hash",    no_argument,       0,    300},
 		{"verbose",        no_argument,       0,    500},
 		{0,                0,                 0,      0}
@@ -297,8 +353,13 @@ int main(int argc, char* argv[]) {
 	aft.ind = NULL;
 	aft.snp = NULL;
 	aft.geno = NULL;
-	char* out_prefix = NULL;
+	admixio_file_trio out_files;
+	out_files.ind = NULL;
+	out_files.snp = NULL;
+	out_files.geno = NULL;
 	char* ind_filt_file = NULL;
+	char* snp_filt_file = NULL;
+	geno_file_type output_type = PAM;
 	while(1) {
 		int c = getopt_long(argc, argv, "hp:P:s:i:k:e:o:", long_options, NULL);
 		if(c == -1) { break; }
@@ -348,11 +409,16 @@ int main(int argc, char* argv[]) {
 				aft.ind = strdup(optarg);
 				break;
 			case 'o':
-				if(out_prefix) {
-					fprintf(stderr, "ERROR: output prefix of '%s' has already been specified!\n", out_prefix);
+				if(out_files.geno) {
+					fprintf(stderr, "ERROR: output prefix has already been specified!\n");
 					exit(EXIT_FAILURE);
 				} else {
-					out_prefix = optarg;
+					out_files.ind = (char*)malloc(sizeof(char) * (strlen(optarg) + STR_BUF_EXTRA));
+					out_files.snp = (char*)malloc(sizeof(char) * (strlen(optarg) + STR_BUF_EXTRA));
+					out_files.geno = (char*)malloc(sizeof(char) * (strlen(optarg) + STR_BUF_EXTRA));
+					sprintf(out_files.snp, "%s.snp", optarg);
+					sprintf(out_files.ind, "%s.ind", optarg);
+					sprintf(out_files.geno, "%s.geno", optarg);
 				}
 				break;
 			case 'e':
@@ -362,6 +428,22 @@ int main(int argc, char* argv[]) {
 				}
 				ind_filt_file = optarg;
 				break;
+			case 'k':
+				if(snp_filt_file) {
+					fprintf(stderr, "ERROR: keep file of '%s' has already been specified!\n", snp_filt_file);
+					exit(EXIT_FAILURE);
+				}
+				snp_filt_file = optarg;
+				break;
+			case 't':
+				if(strcmp(optarg, "pam") == 0) {
+					output_type = PAM;
+				} else if(strcmp(optarg, "egn") == 0) {
+					output_type = EGN;
+				} else {
+					fprintf(stderr, "ERROR: invalid output type %s. Must be 'pam' or 'egn'.\n", optarg);
+					exit(EXIT_FAILURE);
+				}
 			case 300:
 				HASH_CHECK = false;
 				break;
@@ -374,8 +456,9 @@ int main(int argc, char* argv[]) {
 				abort();
 		}
 	}
-	
+	// ADD HASH CHECK	
 	admixio_data_trio adt = admixio_data_init(aft);
+	if(adt.geno.geno_type == PAM) { read_pam_header(&adt.geno.reader.pam); }
 	struct idx_head ind_idx_head;
 	struct ind_idx_head missing_ind_idx;
 	if(ind_filt_file) {
@@ -424,13 +507,79 @@ int main(int argc, char* argv[]) {
 		free(ind_pops);
 	}
 
+	struct idx_head snp_idx_head;
+	struct str_list_head missing_snp_idx;
+	if(snp_filt_file) {
+		TAILQ_INIT(&snp_idx_head);
+		TAILQ_INIT(&missing_snp_idx);
+		size_t n_elems = num_lines(snp_filt_file);
+		char** snp_ids = (char**)malloc(sizeof(char*) * n_elems);
+		FILE* fp = fopen(snp_filt_file, "r");
+		char* line = NULL;
+		size_t len = 0;
+		ssize_t read;
+		size_t i = 0;
+		while ((read = getline(&line, &len, fp)) != -1) {
+			line[read - 1] = '\0';
+			snp_ids[i] = strdup(line);
+			i++;
+		}
+		free(line);
+		fclose(fp);
+		get_multiple_snp_idx(&adt.snp, snp_ids, n_elems, &snp_idx_head, &missing_snp_idx);
+		if(IS_VERBOSE) {
+			if(!TAILQ_EMPTY(&missing_snp_idx)) { 
+				struct str_node* tmp_node;
+				printf("The following SNPs were not found in %s:\n", aft.snp);
+				TAILQ_FOREACH(tmp_node, &missing_snp_idx, nodes) {
+					printf("\t%s\n", tmp_node->str);
+				}
+			}
+		}
+		for(size_t idx = 0; idx < n_elems; idx++) {
+			free(snp_ids[idx]);
+		}
+		free(snp_ids);
+	}
+	// init writer
+	// make outputs
+	ind_data ind_out;
+	snp_data snp_out;
+	filter_ind_data(&adt.ind, &ind_out, &ind_idx_head);
+	filter_snp_data(&adt.snp, &snp_out, &snp_idx_head);
+	write_ind_data(&ind_out, out_files.ind);
+	write_snp_data(&snp_out, out_files.snp);
+	geno_writer wtr = writer_init(output_type, out_files.geno, &snp_out, &ind_out);
+	struct idx_node* idx_snp;
+	TAILQ_FOREACH(idx_snp, &snp_idx_head, nodes) {
+		goto_var(&adt.geno, &adt.snp, adt.snp.var_id[idx_snp->idx]);
+		uint8_t* dosages_in = read_record(&adt.geno);
+		uint8_t* dosages_out = (uint8_t*)malloc(sizeof(uint8_t) * ind_out.length);
+		size_t idx = 0;
+		struct idx_node* idx_ind;
+		TAILQ_FOREACH(idx_ind, &ind_idx_head, nodes) {
+			dosages_out[idx] = dosages_in[idx_ind->idx];
+			idx++;
+		}
+		write_record(&wtr, dosages_out);
+		free(dosages_in);
+		free(dosages_out);
+	}
+	close_geno_writer(&wtr);
 	// free
 	free(aft.ind);
 	free(aft.snp);
 	free(aft.geno);
+	free(out_files.ind);
+	free(out_files.snp);
+	free(out_files.geno);
 	free_snp_data(&adt.snp);
+	free_snp_data(&snp_out);
 	free_ind_data(&adt.ind);
+	free_ind_data(&ind_out);
 	close_geno_reader(&adt.geno);
 	if(ind_filt_file) { free_idx_list(&ind_idx_head); }
 	if(ind_filt_file) { free_ind_idx_list(&missing_ind_idx); }
+	if(snp_filt_file) { free_idx_list(&snp_idx_head); }
+	if(snp_filt_file) { free_str_list(&missing_snp_idx); }
 }
