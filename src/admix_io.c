@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdbool.h> 
 #include <stdlib.h>
+#include <stdint.h>
 #include <sys/queue.h>
 #include <getopt.h>
 #include <dotgeno.h>
@@ -62,6 +63,18 @@ idx_list_arr init_idx_list_arr(size_t length) {
 
 void free_idx_list_arr(idx_list_arr* ila) {
 	free(ila->elems);
+}
+
+void insert_range(size_t length, struct idx_head* head) {
+	if(!TAILQ_EMPTY(head)) {
+		fprintf(stderr, "ERROR: list must be empty to run insert_range function.\n");
+		exit(EXIT_FAILURE);
+	}
+	for(size_t i = 0; i < length; i++) {
+		struct idx_node* idn = (struct idx_node*)malloc(sizeof(struct idx_node));
+		idn->idx = i;
+		TAILQ_INSERT_TAIL(head, idn, nodes);		
+	}
 }
 
 geno_file_type get_geno_file_type(char* filename) {
@@ -343,7 +356,11 @@ int main(int argc, char* argv[]) {
 		{"keep",           required_argument, NULL, 'k'},
 		{"extract",        required_argument, NULL, 'e'},
 		{"out",            required_argument, NULL, 'o'},
-		{"output_type",    required_argument, NULL, 't'},
+		{"output-type",    required_argument, NULL, 't'},
+		{"sex",            required_argument, NULL, 'S'},
+		{"chr",            required_argument, NULL, 'c'},
+		{"range",          required_argument, NULL, 'r'},
+		{"keep-pop",       required_argument, NULL, 400},
 		{"ignore-hash",    no_argument,       0,    300},
 		{"verbose",        no_argument,       0,    500},
 		{0,                0,                 0,      0}
@@ -359,7 +376,18 @@ int main(int argc, char* argv[]) {
 	out_files.geno = NULL;
 	char* ind_filt_file = NULL;
 	char* snp_filt_file = NULL;
+	char* population_file = NULL;
+	char* sex = NULL;
+	char* chr_str = NULL;
+	char* range_str = NULL;
+	double maf_min = 0;
+	double maf_max = 0.5;
+	double mind = 0; // missingness rate
+	uint64_t mac_min = 0;
+	uint64_t mac_max = UINT64_MAX;
 	geno_file_type output_type = PAM;
+	size_t N_IND_FILT = 0;
+	size_t N_SNP_FILT = 0;
 	while(1) {
 		int c = getopt_long(argc, argv, "hp:P:s:i:k:e:o:", long_options, NULL);
 		if(c == -1) { break; }
@@ -444,8 +472,37 @@ int main(int argc, char* argv[]) {
 					fprintf(stderr, "ERROR: invalid output type %s. Must be 'pam' or 'egn'.\n", optarg);
 					exit(EXIT_FAILURE);
 				}
+				break;
+			case 'S':
+				if(sex) {
+					fprintf(stderr, "ERROR: sex argument already provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				sex = optarg;
+				break;
+			case 'c':
+				if(chr_str) {
+					fprintf(stderr, "ERROR: chr argument already provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				chr_str = optarg;
+				break;
+			case 'r':
+				if(range_str) {
+					fprintf(stderr, "ERROR: chr argument already provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				range_str = optarg;
+				break;
 			case 300:
 				HASH_CHECK = false;
+				break;
+			case 400:
+				if(population_file) {
+					fprintf(stderr, "ERROR: population file of '%s' has already been specified!\n",  population_file);
+					exit(EXIT_FAILURE);
+				}
+				population_file = optarg;
 				break;
 			case 500:
 				IS_VERBOSE = true;
@@ -456,12 +513,21 @@ int main(int argc, char* argv[]) {
 				abort();
 		}
 	}
-	// ADD HASH CHECK	
 	admixio_data_trio adt = admixio_data_init(aft);
-	if(adt.geno.geno_type == PAM) { read_pam_header(&adt.geno.reader.pam); }
+
+	// hash check
+	if(adt.geno.geno_type == PAM) {
+		hdr_data hdr = read_pam_header(&adt.geno.reader.pam);
+		if(HASH_CHECK && ((hdr.ind_hash != adt.ind.hash) || (hdr.snp_hash != adt.snp.hash))) {
+			fprintf(stderr, "ERROR: Invalid hash in PACKEDANCESTRYMAP file!\n");
+			exit(EXIT_FAILURE);	
+		}
+	}
+
 	struct idx_head ind_idx_head;
 	struct ind_idx_head missing_ind_idx;
 	if(ind_filt_file) {
+		N_IND_FILT++;
 		TAILQ_INIT(&ind_idx_head);
 		TAILQ_INIT(&missing_ind_idx);
 		size_t n_elems = num_lines(ind_filt_file);
@@ -510,6 +576,7 @@ int main(int argc, char* argv[]) {
 	struct idx_head snp_idx_head;
 	struct str_list_head missing_snp_idx;
 	if(snp_filt_file) {
+		N_SNP_FILT++;
 		TAILQ_INIT(&snp_idx_head);
 		TAILQ_INIT(&missing_snp_idx);
 		size_t n_elems = num_lines(snp_filt_file);
@@ -541,23 +608,154 @@ int main(int argc, char* argv[]) {
 		}
 		free(snp_ids);
 	}
+
+	struct idx_head ind_pop_idx_head;
+	struct str_list_head missing_ind_pops_idx;
+	if(population_file) {
+		N_IND_FILT++;
+		TAILQ_INIT(&ind_pop_idx_head);
+		size_t n_elems = num_lines(population_file);
+		char** pops = (char**)malloc(sizeof(char*) * n_elems);
+		FILE* fp = fopen(population_file, "r");
+		char* line = NULL;
+		size_t len = 0;
+		ssize_t read;
+		size_t i = 0;
+		while ((read = getline(&line, &len, fp)) != -1) {
+			line[read - 1] = '\0';
+			pops[i] = strdup(line);
+			i++;
+		}
+		free(line);
+		fclose(fp);
+		get_multiple_pops(&adt.ind, pops, n_elems, &ind_pop_idx_head, &missing_ind_pops_idx);
+		if(IS_VERBOSE) {
+			if(!TAILQ_EMPTY(&missing_ind_pops_idx)) { 
+				struct str_node* tmp_node;
+				printf("The following populations were not found in %s:\n", aft.snp);
+				TAILQ_FOREACH(tmp_node, &missing_ind_pops_idx, nodes) {
+					printf("\t%s\n", tmp_node->str);
+				}
+			}
+		}
+		for(size_t idx = 0; idx < n_elems; idx++) {
+			free(pops[idx]);
+		}
+		free(pops);
+	}
+
+	struct idx_head ind_sex_idx_head;
+	if(sex) {
+		N_IND_FILT++;
+		TAILQ_INIT(&ind_sex_idx_head);
+		get_multiple_sex(&adt.ind, sex, &ind_sex_idx_head); 
+	}
+
+	struct idx_head snp_chr_idx_head;
+	if(chr_str) {
+		N_SNP_FILT++;
+		TAILQ_INIT(&snp_chr_idx_head);
+		size_t n_elems;
+		char** chrs = str_split(chr_str, ',', &n_elems);
+		get_multiple_chrs(&adt.snp, chrs, n_elems, &snp_chr_idx_head); 
+		for(size_t i = 0; i < n_elems; i++) { free(chrs[i]); }
+		free(chrs);
+	}
+
+	struct idx_head snp_range_idx_head;
+	if(range_str) {
+		N_SNP_FILT++;
+		TAILQ_INIT(&snp_range_idx_head);
+		size_t n_elems;
+		char** ranges = str_split(range_str, ',', &n_elems);
+		char** chrs = (char**)malloc(sizeof(char*) * n_elems);
+		uint64_t* starts = (uint64_t*)malloc(sizeof(uint64_t) * n_elems);
+		uint64_t* ends = (uint64_t*)malloc(sizeof(uint64_t) * n_elems);
+		for(size_t i = 0; i < n_elems; i++) {
+			size_t n_elems_prime;
+			char* rng = ranges[i];
+			char** chr_pos = str_split(rng, ':', &n_elems_prime);
+			if(n_elems_prime != 2) {
+				fprintf(stderr, "ERROR: invalid range string: '%s'.\n", rng);
+				exit(EXIT_FAILURE);
+			}
+			char* chr = strdup(chr_pos[0]);
+			char* start_end = chr_pos[1];
+			char** start_end_split = str_split(start_end, '-', &n_elems_prime);
+			if(n_elems_prime != 2) {
+				fprintf(stderr, "ERROR: invalid range string '%s'.\n", rng);
+				exit(EXIT_FAILURE);
+			}
+			uint64_t start = (uint64_t)atoi(start_end_split[0]);
+			uint64_t end = (uint64_t)atoi(start_end_split[1]);
+			chrs[i] = chr;
+			starts[i] = start;
+			ends[i] = end;
+			// freeing time!
+			free(start_end_split[0]); free(start_end_split[1]); free(start_end_split);
+			free(chr_pos[0]); free(chr_pos[1]); free(chr_pos);
+			free(ranges[i]);
+		}
+		free(ranges);
+		get_multiple_ranges(&adt.snp, chrs, starts, ends, n_elems, &snp_range_idx_head);
+		for(size_t i = 0; i < n_elems; i++) {
+			free(chrs[i]);
+		}
+		free(chrs);
+		free(starts);
+		free(ends);
+	}
+		
+	idx_list_arr snp_ila = init_idx_list_arr(N_SNP_FILT);
+	size_t idx = 0;
+	if(snp_filt_file) { snp_ila.elems[idx] = &snp_idx_head; idx++; }
+	if(chr_str) { snp_ila.elems[idx] = &snp_chr_idx_head; idx++; }
+	if(range_str) { snp_ila.elems[idx] = &snp_range_idx_head; idx++; }
+
+	idx_list_arr ind_ila = init_idx_list_arr(N_IND_FILT);
+	idx = 0;
+	if(ind_filt_file) { ind_ila.elems[idx] = &ind_idx_head; idx++; }
+	if(population_file) { ind_ila.elems[idx] = &ind_pop_idx_head; idx++; }
+	if(sex) { ind_ila.elems[idx] = &ind_sex_idx_head; idx++; }
+
+	struct idx_head ind_idx_final_head;
+	struct idx_head snp_idx_final_head;
+	TAILQ_INIT(&ind_idx_final_head);
+	TAILQ_INIT(&snp_idx_final_head);
+
+	if(N_IND_FILT > 0) {
+		intersect_idx(&ind_ila, &ind_idx_final_head);
+	}  else {
+		insert_range(adt.ind.length, &ind_idx_final_head);
+	}
+	if(N_SNP_FILT > 0) {
+		intersect_idx(&snp_ila, &snp_idx_final_head);
+	} else {
+		insert_range(adt.snp.length, &snp_idx_final_head);
+	}
+
+	// ADD SNP FILTER WALKTHROUGH HERE!!!
+	//
+	//
+	// // // // // // // // // // // // //
+
 	// init writer
 	// make outputs
 	ind_data ind_out;
 	snp_data snp_out;
-	filter_ind_data(&adt.ind, &ind_out, &ind_idx_head);
-	filter_snp_data(&adt.snp, &snp_out, &snp_idx_head);
+	filter_ind_data(&adt.ind, &ind_out, &ind_idx_final_head);
+	filter_snp_data(&adt.snp, &snp_out, &snp_idx_final_head);
 	write_ind_data(&ind_out, out_files.ind);
 	write_snp_data(&snp_out, out_files.snp);
 	geno_writer wtr = writer_init(output_type, out_files.geno, &snp_out, &ind_out);
 	struct idx_node* idx_snp;
-	TAILQ_FOREACH(idx_snp, &snp_idx_head, nodes) {
+	TAILQ_FOREACH(idx_snp, &snp_idx_final_head, nodes) {
 		goto_var(&adt.geno, &adt.snp, adt.snp.var_id[idx_snp->idx]);
 		uint8_t* dosages_in = read_record(&adt.geno);
 		uint8_t* dosages_out = (uint8_t*)malloc(sizeof(uint8_t) * ind_out.length);
 		size_t idx = 0;
 		struct idx_node* idx_ind;
-		TAILQ_FOREACH(idx_ind, &ind_idx_head, nodes) {
+		TAILQ_FOREACH(idx_ind, &ind_idx_final_head, nodes) {
 			dosages_out[idx] = dosages_in[idx_ind->idx];
 			idx++;
 		}
@@ -582,4 +780,13 @@ int main(int argc, char* argv[]) {
 	if(ind_filt_file) { free_ind_idx_list(&missing_ind_idx); }
 	if(snp_filt_file) { free_idx_list(&snp_idx_head); }
 	if(snp_filt_file) { free_str_list(&missing_snp_idx); }
+	if(population_file) { free_idx_list(&ind_pop_idx_head); }
+	if(population_file) { free_str_list(&missing_ind_pops_idx); }
+	if(sex) { free_idx_list(&ind_sex_idx_head); }
+	if(chr_str) { free_idx_list(&snp_chr_idx_head); }
+	if(range_str) { free_idx_list(&snp_range_idx_head); }
+	free_idx_list_arr(&snp_ila);
+	free_idx_list_arr(&ind_ila);
+	free_idx_list(&snp_idx_final_head);
+	free_idx_list(&ind_idx_final_head);
 }
