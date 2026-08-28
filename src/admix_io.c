@@ -835,7 +835,6 @@ int main(int argc, char* argv[]) {
 		if((maf_min > 0) || (maf_max < 0.5)) {
 			end_while = false;
 			double maf = get_maf(dosages, &ind_idx_final_head);
-			printf("%f\n", maf);
 			if((maf < maf_min) || (maf > maf_max)) {
 				TAILQ_REMOVE(&snp_idx_final_head, idx_snp, nodes);
 				free(idx_snp);
@@ -846,7 +845,6 @@ int main(int argc, char* argv[]) {
 		if(!removed && ((mac_min != 0) || (mac_max != UINT64_MAX))) {
 			end_while = false;
 			uint64_t mac = get_mac(dosages, &ind_idx_final_head);
-			printf("%zu\n", mac);
 			if((mac < mac_min) || (mac > mac_max)) {
 				TAILQ_REMOVE(&snp_idx_final_head, idx_snp, nodes);
 				free(idx_snp);
@@ -857,7 +855,6 @@ int main(int argc, char* argv[]) {
 		if(!removed && (msnp > 0)) {
 			end_while = false;
 			double msnp_prime = get_msnp(dosages, &ind_idx_final_head);
-			printf("%f\n", msnp_prime);
 			if(msnp_prime > msnp) {
 				TAILQ_REMOVE(&snp_idx_final_head, idx_snp, nodes);
 				free(idx_snp);
