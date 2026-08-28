@@ -2,12 +2,15 @@
 #include <stdbool.h> 
 #include <stdlib.h>
 #include <stdint.h>
+#include <math.h>
 #include <sys/queue.h>
 #include <getopt.h>
 #include <dotgeno.h>
 
 #define MAGIC_BYTES_SIZE 4
 #define STR_BUF_EXTRA 6
+
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
 bool HASH_CHECK = true;
 bool IS_VERBOSE = false;
@@ -221,6 +224,7 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 	// get first elements
 	struct idx_node** cur_elems = (struct idx_node**)malloc(ila->length * sizeof(struct idx_node*));
 	for(size_t i = 0; i < ila->length; i++) {
+		if(TAILQ_EMPTY(ila->elems[i])) { return cnt; }
 		cur_elems[i] = TAILQ_FIRST(ila->elems[i]);
 	}
 	
@@ -346,6 +350,42 @@ void print_help() {
 	printf("Future help message here\n");
 }
 
+double get_maf(uint8_t* dosages, struct idx_head* head) {
+	uint64_t non_na_cnt = 0;
+	uint64_t sum_dosage = 0;
+	struct idx_node* idx;
+	TAILQ_FOREACH(idx, head, nodes) {
+		non_na_cnt += dosages[idx->idx] != NAN_VAL;
+		sum_dosage += (dosages[idx->idx] != NAN_VAL) * dosages[idx->idx];
+	}
+	double af = sum_dosage / (2.0 * non_na_cnt);
+	return MIN(af, fabs(1-af));
+}
+
+uint64_t get_mac(uint8_t* dosages, struct idx_head* head) {
+	uint64_t sum_dosage = 0;
+	uint64_t sum_total = 0;
+	struct idx_node* idx;
+	TAILQ_FOREACH(idx, head, nodes) {
+		sum_dosage += (dosages[idx->idx] != NAN_VAL) * dosages[idx->idx];
+		sum_total += (dosages[idx->idx] != NAN_VAL) * 2;
+	}
+	return MIN(sum_dosage, sum_total - sum_dosage);
+}
+
+double get_msnp(uint8_t* dosages, struct idx_head* head) {
+	uint64_t na_cnt = 0;
+	uint64_t total = 0;
+	struct idx_node* idx;
+	TAILQ_FOREACH(idx, head, nodes) {
+		na_cnt += dosages[idx->idx] == NAN_VAL;
+		total++;
+	}
+	return (1.0 * na_cnt) / total;
+}
+
+
+
 int main(int argc, char* argv[]) {
 	static struct option long_options[] = {
 		{"help",           no_argument,       NULL, 'h'},
@@ -360,9 +400,14 @@ int main(int argc, char* argv[]) {
 		{"sex",            required_argument, NULL, 'S'},
 		{"chr",            required_argument, NULL, 'c'},
 		{"range",          required_argument, NULL, 'r'},
-		{"keep-pop",       required_argument, NULL, 400},
 		{"ignore-hash",    no_argument,       0,    300},
-		{"verbose",        no_argument,       0,    500},
+		{"keep-pop",       required_argument, NULL, 400},
+		{"maf",            required_argument, NULL, 500},
+		{"max-maf",        required_argument, NULL, 600},
+		{"mac",            required_argument, NULL, 700},
+		{"max-mac",        required_argument, NULL, 800},
+		{"msnp",           required_argument, NULL, 900},
+		{"verbose",        no_argument,       0,   1000},
 		{0,                0,                 0,      0}
 	};
 	
@@ -382,7 +427,7 @@ int main(int argc, char* argv[]) {
 	char* range_str = NULL;
 	double maf_min = 0;
 	double maf_max = 0.5;
-	double mind = 0; // missingness rate
+	double msnp = 0; // missingness rate
 	uint64_t mac_min = 0;
 	uint64_t mac_max = UINT64_MAX;
 	geno_file_type output_type = PAM;
@@ -505,6 +550,33 @@ int main(int argc, char* argv[]) {
 				population_file = optarg;
 				break;
 			case 500:
+				maf_min = strtod(optarg, NULL);
+				if(!((maf_min >= 0) && (maf_min <= 0.5))) {
+					fprintf(stderr, "ERROR: maf must be between 0 and 0.5!\n");
+					exit(EXIT_FAILURE);
+				}
+				break;
+			case 600:
+				maf_max = strtod(optarg, NULL);
+				if(!((maf_max >= 0) && (maf_max <= 0.5))) {
+					fprintf(stderr, "ERROR: max-maf must be between 0 and 0.5!\n");
+					exit(EXIT_FAILURE);
+				}
+				break;
+			case 700:
+				mac_min = strtoul(optarg, NULL, 10);
+				break;
+			case 800:
+				mac_max = strtoul(optarg, NULL, 10);
+				break;
+			case 900:
+				msnp = strtod(optarg, NULL);
+				if(!((msnp > 0) && (msnp <= 1))) {
+					fprintf(stderr, "ERROR: msnp must be greater than 0 and less than or equal to 1!\n");
+					exit(EXIT_FAILURE);
+				}
+				break;
+			case 1000:
 				IS_VERBOSE = true;
 				break;
 			case '?':
@@ -566,7 +638,12 @@ int main(int argc, char* argv[]) {
 			}
 		}
 		for(size_t idx = 0; idx < n_elems; idx++) {
-			free(ind_ids[idx]);
+			free(ind_ids[idx]);				maf_max = strtod(optarg, NULL);
+				if(!((maf_max >= 0) && (maf_max <= 0.5))) {
+					fprintf(stderr, "ERROR: maf must be between 0 and 0.5!\n");
+					exit(EXIT_FAILURE);
+				}
+				break;
 			free(ind_pops[idx]);
 		}
 		free(ind_ids);
@@ -686,8 +763,8 @@ int main(int argc, char* argv[]) {
 				fprintf(stderr, "ERROR: invalid range string '%s'.\n", rng);
 				exit(EXIT_FAILURE);
 			}
-			uint64_t start = (uint64_t)atoi(start_end_split[0]);
-			uint64_t end = (uint64_t)atoi(start_end_split[1]);
+			uint64_t start = (uint64_t)strtoul(start_end_split[0], NULL, 10);
+			uint64_t end = (uint64_t)strtoul(start_end_split[1], NULL, 10);
 			chrs[i] = chr;
 			starts[i] = start;
 			ends[i] = end;
@@ -734,10 +811,70 @@ int main(int argc, char* argv[]) {
 		insert_range(adt.snp.length, &snp_idx_final_head);
 	}
 
+	// check if empty
+	if(TAILQ_EMPTY(&ind_idx_final_head)) {
+		printf("WARNING: No individuals meet the filtering criteria specified. No output was produced.\n");
+		return 0;
+	}
+	if(TAILQ_EMPTY(&snp_idx_final_head)) {
+		printf("WARNING: No variants meet the filtering criteria specified. No output was produced.\n");
+		return 0;
+	}
 	// ADD SNP FILTER WALKTHROUGH HERE!!!
 	//
 	//
 	// // // // // // // // // // // // //
+	struct idx_node* idx_snp = TAILQ_FIRST(&snp_idx_final_head);
+	while(1) {
+		goto_var(&adt.geno, &adt.snp, adt.snp.var_id[idx_snp->idx]);
+		uint8_t* dosages = read_record(&adt.geno);
+		struct idx_node* idx_nxt = TAILQ_NEXT(idx_snp, nodes);
+		struct idx_node* old_val = idx_snp;
+		bool end_while = true;
+		bool removed = false;
+		if((maf_min > 0) || (maf_max < 0.5)) {
+			end_while = false;
+			double maf = get_maf(dosages, &ind_idx_final_head);
+			printf("%f\n", maf);
+			if((maf < maf_min) || (maf > maf_max)) {
+				TAILQ_REMOVE(&snp_idx_final_head, idx_snp, nodes);
+				free(idx_snp);
+				removed = true;
+			}
+		}
+
+		if(!removed && ((mac_min != 0) || (mac_max != UINT64_MAX))) {
+			end_while = false;
+			uint64_t mac = get_mac(dosages, &ind_idx_final_head);
+			printf("%zu\n", mac);
+			if((mac < mac_min) || (mac > mac_max)) {
+				TAILQ_REMOVE(&snp_idx_final_head, idx_snp, nodes);
+				free(idx_snp);
+				removed = true;
+			}
+		}
+		
+		if(!removed && (msnp > 0)) {
+			end_while = false;
+			double msnp_prime = get_msnp(dosages, &ind_idx_final_head);
+			printf("%f\n", msnp_prime);
+			if(msnp_prime > msnp) {
+				TAILQ_REMOVE(&snp_idx_final_head, idx_snp, nodes);
+				free(idx_snp);
+				removed = true;
+			}
+		}
+		free(dosages);
+		if((idx_nxt == NULL) || end_while) {
+			break;
+		}
+		idx_snp = idx_nxt;
+	}	
+
+	if(TAILQ_EMPTY(&snp_idx_final_head)) {
+		printf("WARNING: No variants meet the filtering criteria specified. No output was produced.\n");
+		return 0;
+	}
 
 	// init writer
 	// make outputs
@@ -748,7 +885,7 @@ int main(int argc, char* argv[]) {
 	write_ind_data(&ind_out, out_files.ind);
 	write_snp_data(&snp_out, out_files.snp);
 	geno_writer wtr = writer_init(output_type, out_files.geno, &snp_out, &ind_out);
-	struct idx_node* idx_snp;
+	// struct idx_node* idx_snp;
 	TAILQ_FOREACH(idx_snp, &snp_idx_final_head, nodes) {
 		goto_var(&adt.geno, &adt.snp, adt.snp.var_id[idx_snp->idx]);
 		uint8_t* dosages_in = read_record(&adt.geno);
@@ -789,4 +926,5 @@ int main(int argc, char* argv[]) {
 	free_idx_list_arr(&ind_ila);
 	free_idx_list(&snp_idx_final_head);
 	free_idx_list(&ind_idx_final_head);
+	return 0;
 }
