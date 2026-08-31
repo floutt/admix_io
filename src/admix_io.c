@@ -1118,10 +1118,8 @@ int main(int argc, char* argv[]) {
 		printf("WARNING: No variants meet the filtering criteria specified. No output was produced.\n");
 		return 0;
 	}
-	// ADD SNP FILTER WALKTHROUGH HERE!!!
-	//
-	//
-	// // // // // // // // // // // // //
+
+	// snp filter walkthrough
 	struct idx_node* idx_snp = TAILQ_FIRST(&snp_idx_final_head);
 	while(1) {
 		goto_var(&adt.geno, &adt.snp, adt.snp.var_id[idx_snp->idx]);
@@ -1180,7 +1178,7 @@ int main(int argc, char* argv[]) {
 	write_ind_data(&ind_out, out_files.ind);
 	write_snp_data(&snp_out, out_files.snp);
 	geno_writer wtr = writer_init(output_type, out_files.geno, &snp_out, &ind_out);
-	// struct idx_node* idx_snp;
+	// final write
 	TAILQ_FOREACH(idx_snp, &snp_idx_final_head, nodes) {
 		goto_var(&adt.geno, &adt.snp, adt.snp.var_id[idx_snp->idx]);
 		uint8_t* dosages_in = read_record(&adt.geno);
