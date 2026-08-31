@@ -216,6 +216,15 @@ bool all_equal(struct idx_node** arr, size_t length) {
         return true; 
 }
 
+bool all_null(struct idx_node** arr, size_t length) {
+        for(size_t i = 0; i < length; i++) {
+			if(arr[i]) {
+				return false;
+			}
+        }
+        return true; 
+}
+
 /* now filter merge based on the linked lists */
 // return length of output
 // TEST!!!!
@@ -287,6 +296,44 @@ size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 		}
 	}
 	return cnt;
+}
+
+void remove_idx(idx_list_arr* ila, struct idx_head* ref_head) {
+	struct idx_node** cur_elems_ila = (struct idx_node**)malloc(ila->length * sizeof(struct idx_node*));
+	for(size_t i = 0; i < ila->length; i++) {
+		if(TAILQ_EMPTY(ila->elems[i])) { return; }
+		cur_elems_ila[i] = TAILQ_FIRST(ila->elems[i]);
+	}
+	struct idx_node* cur_elem_ref = TAILQ_FIRST(ref_head);
+
+	while(1) {
+		if(cur_elem_ref == NULL) { break; }
+		if(all_null(cur_elems_ila, ila->length)) { break; }
+		bool cur_elem_removed = false;
+		for(size_t i = 0; i < ila->length; i++) {
+			if(cur_elems_ila[i] == NULL) { continue; }
+			// if any elements of the remove array are less than the current value in the ref then skip
+			// until that is the case
+			while(cur_elems_ila[i]->idx < cur_elem_ref->idx) {
+				cur_elems_ila[i] = TAILQ_NEXT(cur_elems_ila[i], nodes);
+				if(cur_elems_ila[i] == NULL) { break; }
+			}
+			// if the element is equal to the current value then remove it and iterate
+			if(cur_elems_ila[i]) {
+				if(cur_elems_ila[i]->idx == cur_elem_ref->idx) {
+					struct idx_node* old_val = cur_elem_ref;
+					TAILQ_REMOVE(ref_head, cur_elem_ref, nodes);
+					cur_elem_ref = TAILQ_NEXT(cur_elem_ref, nodes);
+					free(old_val);
+					cur_elem_removed = true;
+					break;
+				}
+			}
+		}
+		// if no element was removed then go to the next element
+		if(!cur_elem_removed) { cur_elem_ref = TAILQ_NEXT(cur_elem_ref, nodes); }
+	}
+	free(cur_elems_ila);
 }
 
 char** str_split(char* str, char delim, size_t* n_elems) {
@@ -388,27 +435,33 @@ double get_msnp(uint8_t* dosages, struct idx_head* head) {
 
 int main(int argc, char* argv[]) {
 	static struct option long_options[] = {
-		{"help",           no_argument,       NULL, 'h'},
-		{"prefix",         required_argument, NULL, 'p'},
-		{"geno",           required_argument, NULL, 'P'},
-		{"snp",            required_argument, NULL, 's'},
-		{"ind",            required_argument, NULL, 'i'},
-		{"keep",           required_argument, NULL, 'k'},
-		{"extract",        required_argument, NULL, 'e'},
-		{"out",            required_argument, NULL, 'o'},
-		{"output-type",    required_argument, NULL, 't'},
-		{"sex",            required_argument, NULL, 'S'},
-		{"chr",            required_argument, NULL, 'c'},
-		{"range",          required_argument, NULL, 'r'},
-		{"ignore-hash",    no_argument,       0,    300},
-		{"keep-pop",       required_argument, NULL, 400},
-		{"maf",            required_argument, NULL, 500},
-		{"max-maf",        required_argument, NULL, 600},
-		{"mac",            required_argument, NULL, 700},
-		{"max-mac",        required_argument, NULL, 800},
-		{"msnp",           required_argument, NULL, 900},
-		{"verbose",        no_argument,       0,   1000},
-		{0,                0,                 0,      0}
+		{"help",           no_argument,       NULL,  'h'},
+		{"prefix",         required_argument, NULL,  'p'},
+		{"geno",           required_argument, NULL,  'P'},
+		{"snp",            required_argument, NULL,  's'},
+		{"ind",            required_argument, NULL,  'i'},
+		{"keep",           required_argument, NULL,  'k'},
+		{"extract",        required_argument, NULL,  'e'},
+		{"out",            required_argument, NULL,  'o'},
+		{"output-type",    required_argument, NULL,  't'},
+		{"sex",            required_argument, NULL,  'S'},
+		{"chr",            required_argument, NULL,  'c'},
+		{"range",          required_argument, NULL,  'r'},
+		{"ignore-hash",    no_argument,       0,     300},
+		{"keep-pop",       required_argument, NULL,  400},
+		{"maf",            required_argument, NULL,  500},
+		{"max-maf",        required_argument, NULL,  600},
+		{"mac",            required_argument, NULL,  700},
+		{"max-mac",        required_argument, NULL,  800},
+		{"msnp",           required_argument, NULL,  900},
+		{"verbose",        no_argument,       0,    1000},
+		{"remove",         no_argument,       0,    1100},
+		{"remove-pop",     required_argument, NULL, 1200},
+		{"exclude",        required_argument, NULL, 1300},
+		{"remove-sex",     required_argument, NULL, 1400},
+		{"remove-chr",     required_argument, NULL, 1500},
+		{"remove-range",   required_argument, NULL, 1600},
+		{0,                0,                 0,       0}
 	};
 	
 	admixio_file_trio aft;
@@ -425,6 +478,12 @@ int main(int argc, char* argv[]) {
 	char* sex = NULL;
 	char* chr_str = NULL;
 	char* range_str = NULL;
+	char* ind_filt_file_neg = NULL;
+	char* snp_filt_file_neg = NULL;
+	char* population_file_neg = NULL;
+	char* sex_neg = NULL;
+	char* chr_str_neg = NULL;
+	char* range_str_neg = NULL;
 	double maf_min = 0;
 	double maf_max = 0.5;
 	double msnp = 0; // missingness rate
@@ -579,12 +638,55 @@ int main(int argc, char* argv[]) {
 			case 1000:
 				IS_VERBOSE = true;
 				break;
+			case 1100:
+				if(snp_filt_file_neg) {
+					fprintf(stderr, "ERROR: remove file of '%s' has already been specified!\n", snp_filt_file_neg);
+					exit(EXIT_FAILURE);
+				}
+				snp_filt_file_neg = optarg;
+				break;
+			case 1200:
+				if(population_file_neg) {
+					fprintf(stderr, "ERROR: remove-pop file of '%s' has already been specified!\n",  population_file_neg);
+					exit(EXIT_FAILURE);
+				}
+				population_file_neg = optarg;
+				break;
+			case 1300:
+				if(ind_filt_file_neg) {
+					fprintf(stderr, "ERROR: exclude file of '%s' has already been specified!\n", ind_filt_file_neg);
+					exit(EXIT_FAILURE);
+				}
+				ind_filt_file_neg = optarg;
+				break;
+			case 1400:
+				if(sex_neg) {
+					fprintf(stderr, "ERROR: remove-sex argument already provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				sex_neg = optarg;
+				break;
+			case 1500:
+				if(chr_str_neg) {
+					fprintf(stderr, "ERROR: remove-chr argument already provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				chr_str_neg = optarg;
+				break;
+			case 1600:
+				if(range_str_neg) {
+					fprintf(stderr, "ERROR: remove_range argument already provided!\n");
+					exit(EXIT_FAILURE);
+				}
+				range_str_neg = optarg;
+				break;
 			case '?':
 				break;
 			default:
 				abort();
 		}
 	}
+
 	admixio_data_trio adt = admixio_data_init(aft);
 
 	// hash check
@@ -638,12 +740,7 @@ int main(int argc, char* argv[]) {
 			}
 		}
 		for(size_t idx = 0; idx < n_elems; idx++) {
-			free(ind_ids[idx]);				maf_max = strtod(optarg, NULL);
-				if(!((maf_max >= 0) && (maf_max <= 0.5))) {
-					fprintf(stderr, "ERROR: maf must be between 0 and 0.5!\n");
-					exit(EXIT_FAILURE);
-				}
-				break;
+			free(ind_ids[idx]);
 			free(ind_pops[idx]);
 		}
 		free(ind_ids);
@@ -810,6 +907,207 @@ int main(int argc, char* argv[]) {
 	} else {
 		insert_range(adt.snp.length, &snp_idx_final_head);
 	}
+	
+	// now do the negative fitlering stuff
+	N_IND_FILT = 0;
+	N_SNP_FILT = 0;
+
+	struct idx_head ind_idx_head_neg;
+	struct ind_idx_head missing_ind_idx_neg;
+	if(ind_filt_file) {
+		N_IND_FILT++;
+		TAILQ_INIT(&ind_idx_head_neg);
+		TAILQ_INIT(&missing_ind_idx_neg);
+		size_t n_elems = num_lines(ind_filt_file_neg);
+		char** ind_ids = (char**)malloc(sizeof(char*) * n_elems);
+		char** ind_pops = (char**)malloc(sizeof(char*) * n_elems);
+		FILE* fp = fopen(ind_filt_file, "r");
+		char* line = NULL;
+		size_t len = 0;
+		ssize_t read;
+		size_t i = 0;
+		while ((read = getline(&line, &len, fp)) != -1) {
+			line[read - 1] = '\0';
+			size_t num_cols;
+			char** elems = str_split(line, '\t', &num_cols);
+			if(num_cols != 2) {
+				fprintf(stderr, "ERROR: invalid number of columns in extract file %s. Expected two columns per line\n", ind_filt_file_neg);
+				exit(EXIT_FAILURE);
+			}
+			ind_ids[i] = strdup(elems[0]);
+			ind_pops[i] = strdup(elems[1]);
+			free(elems[0]);
+			free(elems[1]);
+			free(elems);
+			i++;
+		}
+		free(line);
+		fclose(fp);
+		get_multiple_ind_idx(&adt.ind, ind_ids, ind_pops, n_elems, &ind_idx_head_neg, &missing_ind_idx_neg);
+		if(IS_VERBOSE) {
+			if(!TAILQ_EMPTY(&missing_ind_idx_neg)) { 
+				struct ind_idx_node* tmp_node;
+				printf("The following individuals were not found in %s:\n", aft.ind);
+				TAILQ_FOREACH(tmp_node, &missing_ind_idx_neg, nodes) {
+					printf("\tind: %s, pop: %s\n", tmp_node->iidx->ind_id, tmp_node->iidx->ind_pop);
+				}
+			}
+		}
+		for(size_t idx = 0; idx < n_elems; idx++) {
+			free(ind_ids[idx]);
+			free(ind_pops[idx]);
+		}
+		free(ind_ids);
+		free(ind_pops);
+	}
+
+	struct idx_head snp_idx_head_neg;
+	struct str_list_head missing_snp_idx_neg;
+	if(snp_filt_file_neg) {
+		N_SNP_FILT++;
+		TAILQ_INIT(&snp_idx_head_neg);
+		TAILQ_INIT(&missing_snp_idx_neg);
+		size_t n_elems = num_lines(snp_filt_file_neg);
+		char** snp_ids = (char**)malloc(sizeof(char*) * n_elems);
+		FILE* fp = fopen(snp_filt_file_neg, "r");
+		char* line = NULL;
+		size_t len = 0;
+		ssize_t read;
+		size_t i = 0;
+		while ((read = getline(&line, &len, fp)) != -1) {
+			line[read - 1] = '\0';
+			snp_ids[i] = strdup(line);
+			i++;
+		}
+		free(line);
+		fclose(fp);
+		get_multiple_snp_idx(&adt.snp, snp_ids, n_elems, &snp_idx_head_neg, &missing_snp_idx_neg);
+		if(IS_VERBOSE) {
+			if(!TAILQ_EMPTY(&missing_snp_idx_neg)) { 
+				struct str_node* tmp_node;
+				printf("The following SNPs were not found in %s:\n", aft.snp);
+				TAILQ_FOREACH(tmp_node, &missing_snp_idx_neg, nodes) {
+					printf("\t%s\n", tmp_node->str);
+				}
+			}
+		}
+		for(size_t idx = 0; idx < n_elems; idx++) {
+			free(snp_ids[idx]);
+		}
+		free(snp_ids);
+	}
+
+	struct idx_head ind_pop_idx_head_neg;
+	struct str_list_head missing_ind_pops_idx_neg;
+	if(population_file_neg) {
+		N_IND_FILT++;
+		TAILQ_INIT(&ind_pop_idx_head_neg);
+		size_t n_elems = num_lines(population_file_neg);
+		char** pops = (char**)malloc(sizeof(char*) * n_elems);
+		FILE* fp = fopen(population_file_neg, "r");
+		char* line = NULL;
+		size_t len = 0;
+		ssize_t read;
+		size_t i = 0;
+		while ((read = getline(&line, &len, fp)) != -1) {
+			line[read - 1] = '\0';
+			pops[i] = strdup(line);
+			i++;
+		}
+		free(line);
+		fclose(fp);
+		get_multiple_pops(&adt.ind, pops, n_elems, &ind_pop_idx_head_neg, &missing_ind_pops_idx_neg);
+		if(IS_VERBOSE) {
+			if(!TAILQ_EMPTY(&missing_ind_pops_idx_neg)) { 
+				struct str_node* tmp_node;
+				printf("The following populations were not found in %s:\n", aft.snp);
+				TAILQ_FOREACH(tmp_node, &missing_ind_pops_idx_neg, nodes) {
+					printf("\t%s\n", tmp_node->str);
+				}
+			}
+		}
+		for(size_t idx = 0; idx < n_elems; idx++) {
+			free(pops[idx]);
+		}
+		free(pops);
+	}
+
+	struct idx_head ind_sex_idx_head_neg;
+	if(sex_neg) {
+		N_IND_FILT++;
+		TAILQ_INIT(&ind_sex_idx_head_neg);
+		get_multiple_sex(&adt.ind, sex_neg, &ind_sex_idx_head_neg); 
+	}
+
+	struct idx_head snp_chr_idx_head_neg;
+	if(chr_str_neg) {
+		N_SNP_FILT++;
+		TAILQ_INIT(&snp_chr_idx_head_neg);
+		size_t n_elems;
+		char** chrs = str_split(chr_str_neg, ',', &n_elems);
+		get_multiple_chrs(&adt.snp, chrs, n_elems, &snp_chr_idx_head_neg); 
+		for(size_t i = 0; i < n_elems; i++) { free(chrs[i]); }
+		free(chrs);
+	}
+
+	struct idx_head snp_range_idx_head_neg;
+	if(range_str_neg) {
+		N_SNP_FILT++;
+		TAILQ_INIT(&snp_range_idx_head_neg);
+		size_t n_elems;
+		char** ranges = str_split(range_str_neg, ',', &n_elems);
+		char** chrs = (char**)malloc(sizeof(char*) * n_elems);
+		uint64_t* starts = (uint64_t*)malloc(sizeof(uint64_t) * n_elems);
+		uint64_t* ends = (uint64_t*)malloc(sizeof(uint64_t) * n_elems);
+		for(size_t i = 0; i < n_elems; i++) {
+			size_t n_elems_prime;
+			char* rng = ranges[i];
+			char** chr_pos = str_split(rng, ':', &n_elems_prime);
+			if(n_elems_prime != 2) {
+				fprintf(stderr, "ERROR: invalid range string: '%s'.\n", rng);
+				exit(EXIT_FAILURE);
+			}
+			char* chr = strdup(chr_pos[0]);
+			char* start_end = chr_pos[1];
+			char** start_end_split = str_split(start_end, '-', &n_elems_prime);
+			if(n_elems_prime != 2) {
+				fprintf(stderr, "ERROR: invalid range string '%s'.\n", rng);
+				exit(EXIT_FAILURE);
+			}
+			uint64_t start = (uint64_t)strtoul(start_end_split[0], NULL, 10);
+			uint64_t end = (uint64_t)strtoul(start_end_split[1], NULL, 10);
+			chrs[i] = chr;
+			starts[i] = start;
+			ends[i] = end;
+			// freeing time!
+			free(start_end_split[0]); free(start_end_split[1]); free(start_end_split);
+			free(chr_pos[0]); free(chr_pos[1]); free(chr_pos);
+			free(ranges[i]);
+		}
+		free(ranges);
+		get_multiple_ranges(&adt.snp, chrs, starts, ends, n_elems, &snp_range_idx_head_neg);
+		for(size_t i = 0; i < n_elems; i++) {
+			free(chrs[i]);
+		}
+		free(chrs);
+		free(starts);
+		free(ends);
+	}
+
+	idx_list_arr snp_ila_neg = init_idx_list_arr(N_SNP_FILT);
+	idx = 0;
+	if(snp_filt_file_neg) { snp_ila_neg.elems[idx] = &snp_idx_head_neg; idx++; }
+	if(chr_str_neg) { snp_ila_neg.elems[idx] = &snp_chr_idx_head_neg; idx++; }
+	if(range_str_neg) { snp_ila_neg.elems[idx] = &snp_range_idx_head_neg; idx++; }
+
+	idx_list_arr ind_ila_neg = init_idx_list_arr(N_IND_FILT);
+	idx = 0;
+	if(ind_filt_file_neg) { ind_ila_neg.elems[idx] = &ind_idx_head_neg; idx++; }
+	if(population_file_neg) { ind_ila_neg.elems[idx] = &ind_pop_idx_head_neg; idx++; }
+	if(sex_neg) { ind_ila_neg.elems[idx] = &ind_sex_idx_head_neg; idx++; }
+
+	if(N_IND_FILT > 0) { remove_idx(&ind_ila_neg, &ind_idx_final_head); }
+	if(N_SNP_FILT > 0) { remove_idx(&snp_ila_neg, &snp_idx_final_head); }
 
 	// check if empty
 	if(TAILQ_EMPTY(&ind_idx_final_head)) {
@@ -923,5 +1221,16 @@ int main(int argc, char* argv[]) {
 	free_idx_list_arr(&ind_ila);
 	free_idx_list(&snp_idx_final_head);
 	free_idx_list(&ind_idx_final_head);
+	if(ind_filt_file_neg) { free_idx_list(&ind_idx_head_neg); }
+	if(ind_filt_file_neg) { free_ind_idx_list(&missing_ind_idx_neg); }
+	if(snp_filt_file_neg) { free_idx_list(&snp_idx_head_neg); }
+	if(snp_filt_file_neg) { free_str_list(&missing_snp_idx_neg); }
+	if(population_file_neg) { free_idx_list(&ind_pop_idx_head_neg); }
+	if(population_file_neg) { free_str_list(&missing_ind_pops_idx_neg); }
+	if(sex_neg) { free_idx_list(&ind_sex_idx_head_neg); }
+	if(chr_str_neg) { free_idx_list(&snp_chr_idx_head_neg); }
+	if(range_str_neg) { free_idx_list(&snp_range_idx_head_neg); }
+	free_idx_list_arr(&snp_ila_neg);
+	free_idx_list_arr(&ind_ila_neg);
 	return 0;
 }
