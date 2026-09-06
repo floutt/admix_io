@@ -393,8 +393,37 @@ size_t num_lines(char* filename) {
 	return n;
 }
 
-void print_help() {
-	printf("Future help message here\n");
+void print_help(char* program) {
+	printf("Usage: %s [OPTIONS]\n", program);
+    printf("General options:\n");
+    printf("\t-h, --help                                 Display help message and exit\n");
+	printf("\t--ignore-hash                              Ignore hash check for PACKEDANCESTRYMAP file\n");
+	printf("\t--verbose                                  Print verbose output\n");
+    printf("Input options:\n");
+    printf("\t-p, --prefix <prefix>                      Prefix of input files\n");
+	printf("\t-g, --geno <filename>                      Input genotype file\n");
+	printf("\t-s, --snp  <filename>                      Input SNP file\n");
+	printf("\t-i, --ind <filename>                       Input individual file\n");
+	printf("Output options:\n");
+	printf("\t-o, --out <prefix>                         Output file prefix\n");
+	printf("\t-t, --output-type {egn|pam}                Output file type\n");
+	printf("Filter options:\n");
+	printf("\t-k, --keep <filename>                      Keep individuals included in file. The file is a tab-separated file where the first and second column have individual and population IDs.\n");
+	printf("\t-e, --extract <filename>                   Keep variants included in the file.\n");
+	printf("\t--keep-pop <filename>                      Keep individuals in the populations specified in file\n");
+	printf("\t-S, --sex <sex>                            Include individuals of specified sex\n");
+	printf("\t-c, --chr <chrs>                           Comma-separated list of chrs to include\n");
+	printf("\t-r, --range <ranges>                       Comma-separated list of position ranges to include. In the form {chr}:{start}-{end}\n");
+	printf("\t--remove <filename>                        Remove individuals included in file. The file is a tab-separated file where the first and second column have individual and population IDs.\n");
+	printf("\t--exclude <filename>                       Remove variants included in the file.\n");
+	printf("\t--remove-pop <filename>                    Remove individuals in the populations specified in file\n");
+	printf("\t--remove-sex <sex>                         Remove individuals of specified sex\n");
+	printf("\t--remove-chr <chrs>                        Comma-separated list of chrs to remove\n");
+	printf("\t--remove-range <ranges>                    Comma-separated list of position ranges to remove. In the form {chr}:{start}-{end}\n");
+	printf("\t--maf {0..0.5}                             Keep variants with a minor allele frequency greater than or equal to specified value\n");
+	printf("\t--max-maf {0..0.5}                         Keep variants with a minor allele frequency less than or equal to specified value\n");
+	printf("\t--mac <int> (must be greater than 0)       Keep variants with a minor allele count greater than or equal to specified value\n");
+	printf("\t--max-mac  <int> (must be greater than 0)  Keep variants with a minor allele count less than or equal to specified value\n");
 }
 
 double get_maf(uint8_t* dosages, struct idx_head* head) {
@@ -497,7 +526,7 @@ int main(int argc, char* argv[]) {
 		if(c == -1) { break; }
 		switch(c) {
 			case 'h':
-				print_help();
+				print_help(argv[0]);
 				exit(EXIT_SUCCESS);
 			case 'p':
 				if(aft.geno) {
@@ -687,6 +716,14 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
+	if((aft.geno == NULL) || (aft.snp == NULL) || (aft.ind == NULL)) {
+		fprintf(stderr, "ERROR: complete set of input files not provided!\n");
+		exit(EXIT_FAILURE);
+	}
+	if((out_files.geno == NULL) || (out_files.snp == NULL) || (out_files.ind == NULL)) {
+		fprintf(stderr, "ERROR: Output file prefix not provided!\n");
+		exit(EXIT_FAILURE);
+	}
 	admixio_data_trio adt = admixio_data_init(aft);
 
 	// hash check
