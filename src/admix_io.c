@@ -423,7 +423,8 @@ void print_help(char* program) {
 	printf("\t--maf {0..0.5}                             Keep variants with a minor allele frequency greater than or equal to specified value\n");
 	printf("\t--max-maf {0..0.5}                         Keep variants with a minor allele frequency less than or equal to specified value\n");
 	printf("\t--mac <int> (must be greater than 0)       Keep variants with a minor allele count greater than or equal to specified value\n");
-	printf("\t--max-mac  <int> (must be greater than 0)  Keep variants with a minor allele count less than or equal to specified value\n");
+	printf("\t--max-mac <int> (must be greater than 0)   Keep variants with a minor allele count less than or equal to specified value\n");
+	printf("\t--msnp {0..1}                              Remove variants with a missingness rate greater than specified value\n");
 }
 
 double get_maf(uint8_t* dosages, struct idx_head* head) {
@@ -583,18 +584,18 @@ int main(int argc, char* argv[]) {
 				}
 				break;
 			case 'e':
-				if(ind_filt_file) {
-					fprintf(stderr, "ERROR: extract file of '%s' has already been specified!\n", ind_filt_file);
-					exit(EXIT_FAILURE);
-				}
-				ind_filt_file = optarg;
-				break;
-			case 'k':
 				if(snp_filt_file) {
-					fprintf(stderr, "ERROR: keep file of '%s' has already been specified!\n", snp_filt_file);
+					fprintf(stderr, "ERROR: extract file of '%s' has already been specified!\n", snp_filt_file);
 					exit(EXIT_FAILURE);
 				}
 				snp_filt_file = optarg;
+				break;
+			case 'k':
+				if(ind_filt_file) {
+					fprintf(stderr, "ERROR: keep file of '%s' has already been specified!\n", ind_filt_file);
+					exit(EXIT_FAILURE);
+				}
+				ind_filt_file = optarg;
 				break;
 			case 't':
 				if(strcmp(optarg, "pam") == 0) {
@@ -668,11 +669,11 @@ int main(int argc, char* argv[]) {
 				IS_VERBOSE = true;
 				break;
 			case 1100:
-				if(snp_filt_file_neg) {
-					fprintf(stderr, "ERROR: remove file of '%s' has already been specified!\n", snp_filt_file_neg);
+				if(ind_filt_file_neg) {
+					fprintf(stderr, "ERROR: remove file of '%s' has already been specified!\n", ind_filt_file_neg);
 					exit(EXIT_FAILURE);
 				}
-				snp_filt_file_neg = optarg;
+				ind_filt_file_neg = optarg;
 				break;
 			case 1200:
 				if(population_file_neg) {
@@ -682,11 +683,11 @@ int main(int argc, char* argv[]) {
 				population_file_neg = optarg;
 				break;
 			case 1300:
-				if(ind_filt_file_neg) {
-					fprintf(stderr, "ERROR: exclude file of '%s' has already been specified!\n", ind_filt_file_neg);
+				if(snp_filt_file_neg) {
+					fprintf(stderr, "ERROR: exclude file of '%s' has already been specified!\n", snp_filt_file_neg);
 					exit(EXIT_FAILURE);
 				}
-				ind_filt_file_neg = optarg;
+				snp_filt_file_neg = optarg;
 				break;
 			case 1400:
 				if(sex_neg) {
