@@ -59,6 +59,7 @@ bool all_null(struct idx_node** arr, size_t length) {
         }
         return true; 
 }
+
 size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
 	size_t cnt = 0;
 	// get first elements
