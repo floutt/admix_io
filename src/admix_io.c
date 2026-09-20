@@ -6,19 +6,17 @@
 #include <sys/queue.h>
 #include <getopt.h>
 #include <dotgeno.h>
+#include "tailq_sort.h"
+#include "io_generics.h"
+#include "idx_funcs.h"
 
-#define MAGIC_BYTES_SIZE 4
 #define STR_BUF_EXTRA 6
 
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#define CMP_IDX(a, b) ((a)->idx > (b)->idx)
 
 bool HASH_CHECK = true;
 bool IS_VERBOSE = false;
-
-typedef enum {
-    EGN,
-	PAM
-} geno_file_type;
 
 typedef struct {
 	char* snp;
@@ -26,88 +24,11 @@ typedef struct {
 	char* geno;
 } admixio_file_trio;
 
-typedef union {
-	egn_file_reader egn;
-	pam_file_reader pam;
-} geno_reader_base;
-
-typedef union {
-	egn_file_writer egn;
-	pam_file_writer pam;
-} geno_writer_base;
-
-typedef struct {
-	geno_reader_base reader;
-	geno_file_type geno_type;
-} geno_reader;
-
-typedef struct {
-	geno_writer_base writer;
-	geno_file_type geno_type;
-} geno_writer;
-
 typedef struct {
 	snp_data snp;
 	ind_data ind;
 	geno_reader geno;
 } admixio_data_trio;
-
-typedef struct {
-	struct idx_head** elems;
-	size_t length;
-} idx_list_arr;
-
-idx_list_arr init_idx_list_arr(size_t length) {
-	idx_list_arr out;
-	out.length = length;
-	out.elems = (struct idx_head**)malloc(length * sizeof(struct idx_head*));
-	return out;
-}
-
-void free_idx_list_arr(idx_list_arr* ila) {
-	free(ila->elems);
-}
-
-void insert_range(size_t length, struct idx_head* head) {
-	if(!TAILQ_EMPTY(head)) {
-		fprintf(stderr, "ERROR: list must be empty to run insert_range function.\n");
-		exit(EXIT_FAILURE);
-	}
-	for(size_t i = 0; i < length; i++) {
-		struct idx_node* idn = (struct idx_node*)malloc(sizeof(struct idx_node));
-		idn->idx = i;
-		TAILQ_INSERT_TAIL(head, idn, nodes);		
-	}
-}
-
-geno_file_type get_geno_file_type(char* filename) {
-	char magic_bytes[MAGIC_BYTES_SIZE + 1];
-	magic_bytes[MAGIC_BYTES_SIZE] = '\0';
-	FILE* fp = fopen(filename, "r");
-	if(fp == NULL) {
-		fprintf(stderr, "ERROR: cannot open file %s\n", filename);
-		exit(EXIT_FAILURE);
-	}
-	size_t n_bytes_read = fread(magic_bytes, 1, MAGIC_BYTES_SIZE, fp);
-	fclose(fp);
-	// can only be a PAM if file size is greater than 4 bytes (MAGIC_BYTES_SIZE)
-	if(n_bytes_read == MAGIC_BYTES_SIZE) {
-		if(strcmp(magic_bytes, "GENO") == 0) {
-			return PAM;
-		}
-	}
-	// now check if it is an EGN if not a PAM
-	bool is_egn = true;
-	for(size_t i = 0; i < n_bytes_read; i++) {
-		is_egn = is_egn && (magic_bytes[i] == '0' || magic_bytes[i] == '1' || magic_bytes[i] == '2' || magic_bytes[i] == '9');
-	}
-	if(is_egn) {
-		return EGN;
-	} else {
-		fprintf(stderr, "ERROR: file %s is neither a PACKEDANCESTRYMAP nor an EIGENSTRAT file\n", filename);
-		exit(EXIT_FAILURE);
-	}
-}
 
 admixio_data_trio admixio_data_init(admixio_file_trio aft) {
 	admixio_data_trio out_adt;
@@ -126,214 +47,6 @@ admixio_data_trio admixio_data_init(admixio_file_trio aft) {
 	}
 	out_adt.geno = rdr;
 	return out_adt;
-}
-
-geno_writer writer_init(geno_file_type geno_type, char* filename, snp_data* snp_info, ind_data* ind_info) {
-	geno_writer wtr;
-	wtr.geno_type = geno_type;
-	switch(geno_type) {
-		case PAM:
-			wtr.writer.pam = pam_file_writer_init(filename, snp_info, ind_info);
-			write_pam_header(&wtr.writer.pam, snp_info, ind_info);
-			break;
-		case EGN:
-			wtr.writer.egn = egn_file_writer_init(filename, snp_info, ind_info);
-			break;
-	}
-	return wtr;
-}
-
-void write_record(geno_writer* wtr, uint8_t* dosages) {
-	switch(wtr->geno_type) {
-		case PAM:
-			write_pam_record(&wtr->writer.pam, dosages);
-			break;
-		case EGN:
-			write_egn_record(&wtr->writer.egn, dosages);
-			break;
-	}
-}
-
-uint8_t* read_record(geno_reader* rdr) {
-	switch(rdr->geno_type) {
-		case PAM:
-			return read_pam_record(&rdr->reader.pam);
-		case EGN:
-			return read_egn_record(&rdr->reader.egn);
-	}
-}
-
-short goto_var(geno_reader* rdr, snp_data* snp_info, char* var_name) {
-	switch(rdr->geno_type) {
-		case PAM:
-			return goto_var_pam(&rdr->reader.pam, snp_info, var_name);
-		case EGN:
-			return goto_var_egn(&rdr->reader.egn, snp_info, var_name);
-	}
-}
-
-void close_geno_reader(geno_reader* gr) {
-	switch(gr->geno_type) {
-		case PAM:
-			close_pam_file_reader(&gr->reader.pam);
-			break;
-		case EGN:
-			close_egn_file_reader(&gr->reader.egn);
-			break;
-	}
-}
-
-void close_geno_writer(geno_writer* gr) {
-	switch(gr->geno_type) {
-		case PAM:
-			close_pam_file_writer(&gr->writer.pam);
-			break;
-		case EGN:
-			close_egn_file_writer(&gr->writer.egn);
-			break;
-	}
-}
-
-size_t get_max_index(struct idx_node** arr, size_t length) {
-        size_t max = 0;
-        size_t max_idx = 0;
-        for(size_t i = 0; i < length; i++) {
-                if(arr[i]->idx >= max) {
-                        max = arr[i]->idx;
-                        max_idx = i;
-                }
-        }
-        return max_idx;
-}
-
-bool all_equal(struct idx_node** arr, size_t length) {
-        size_t first = arr[0]->idx;
-        for(size_t i = 1; i < length; i++) {
-                if(first != arr[i]->idx) {
-                        return false;
-                }
-        }
-        return true; 
-}
-
-bool all_null(struct idx_node** arr, size_t length) {
-        for(size_t i = 0; i < length; i++) {
-			if(arr[i]) {
-				return false;
-			}
-        }
-        return true; 
-}
-
-/* now filter merge based on the linked lists */
-// return length of output
-// TEST!!!!
-size_t intersect_idx(idx_list_arr* ila, struct idx_head* head_out) {
-	size_t cnt = 0;
-	// get first elements
-	struct idx_node** cur_elems = (struct idx_node**)malloc(ila->length * sizeof(struct idx_node*));
-	for(size_t i = 0; i < ila->length; i++) {
-		if(TAILQ_EMPTY(ila->elems[i])) { return cnt; }
-		cur_elems[i] = TAILQ_FIRST(ila->elems[i]);
-	}
-	
-	// fill in output linked list with elements of first list
-	struct idx_node* tmp_node;
-	TAILQ_FOREACH(tmp_node, ila->elems[0], nodes) {
-		struct idx_node* idn = (struct idx_node*)malloc(sizeof(struct idx_node));
-		idn->idx = tmp_node->idx;
-		TAILQ_INSERT_TAIL(head_out, idn, nodes);
-	}
-	struct idx_node* cur_elem_out = TAILQ_FIRST(head_out);
-
-	while(true) {
-		bool end_while = false;  // change value to exit while loop	
-		if(all_equal(cur_elems, ila->length)) {
-			cnt++;
-			cur_elem_out = TAILQ_NEXT(cur_elem_out, nodes);
-			for(size_t i = 0; i < ila->length; i++) {
-				cur_elems[i] = TAILQ_NEXT(cur_elems[i], nodes);
-				if((cur_elems[i] == NULL)) {
-					if(i == 0) { end_while = true; break; }
-					struct idx_node* old_val;
-					while(cur_elem_out) {
-						old_val = cur_elem_out;
-						TAILQ_REMOVE(head_out, cur_elem_out, nodes);
-						cur_elem_out = TAILQ_NEXT(cur_elem_out, nodes);
-						free(old_val);
-					}
-					end_while = true;
-					break;
-				}
-			}
-		} else {
-			size_t max_i = get_max_index(cur_elems, ila->length);
-			for(size_t i = 0; i < ila->length; i++) {
-				if(i == max_i) { continue; }
-				if(cur_elems[i]->idx == cur_elems[max_i]->idx) { continue; }
-				if(i == 0) {
-					TAILQ_REMOVE(head_out, cur_elem_out, nodes);
-					struct idx_node* old_val = cur_elem_out;
-					cur_elem_out = TAILQ_NEXT(cur_elem_out, nodes);
-					free(old_val);
-				}
-				cur_elems[i] = TAILQ_NEXT(cur_elems[i], nodes);
-				if(cur_elems[i] == NULL) {
-					if(i == 0) {
-						end_while = true;
-						break;
-					} else {
-						free_idx_list(head_out);
-						end_while = true;
-						break;
-					}
-				}
-			}
-		}
-		if(end_while) {
-			free(cur_elems);
-			break;
-		}
-	}
-	return cnt;
-}
-
-void remove_idx(idx_list_arr* ila, struct idx_head* ref_head) {
-	struct idx_node** cur_elems_ila = (struct idx_node**)malloc(ila->length * sizeof(struct idx_node*));
-	for(size_t i = 0; i < ila->length; i++) {
-		if(TAILQ_EMPTY(ila->elems[i])) { return; }
-		cur_elems_ila[i] = TAILQ_FIRST(ila->elems[i]);
-	}
-	struct idx_node* cur_elem_ref = TAILQ_FIRST(ref_head);
-
-	while(1) {
-		if(cur_elem_ref == NULL) { break; }
-		if(all_null(cur_elems_ila, ila->length)) { break; }
-		bool cur_elem_removed = false;
-		for(size_t i = 0; i < ila->length; i++) {
-			if(cur_elems_ila[i] == NULL) { continue; }
-			// if any elements of the remove array are less than the current value in the ref then skip
-			// until that is the case
-			while(cur_elems_ila[i]->idx < cur_elem_ref->idx) {
-				cur_elems_ila[i] = TAILQ_NEXT(cur_elems_ila[i], nodes);
-				if(cur_elems_ila[i] == NULL) { break; }
-			}
-			// if the element is equal to the current value then remove it and iterate
-			if(cur_elems_ila[i]) {
-				if(cur_elems_ila[i]->idx == cur_elem_ref->idx) {
-					struct idx_node* old_val = cur_elem_ref;
-					TAILQ_REMOVE(ref_head, cur_elem_ref, nodes);
-					cur_elem_ref = TAILQ_NEXT(cur_elem_ref, nodes);
-					free(old_val);
-					cur_elem_removed = true;
-					break;
-				}
-			}
-		}
-		// if no element was removed then go to the next element
-		if(!cur_elem_removed) { cur_elem_ref = TAILQ_NEXT(cur_elem_ref, nodes); }
-	}
-	free(cur_elems_ila);
 }
 
 char** str_split(char* str, char delim, size_t* n_elems) {
@@ -460,8 +173,6 @@ double get_msnp(uint8_t* dosages, struct idx_head* head) {
 	}
 	return (1.0 * na_cnt) / total;
 }
-
-
 
 int main(int argc, char* argv[]) {
 	static struct option long_options[] = {
@@ -806,6 +517,7 @@ int main(int argc, char* argv[]) {
 		free(line);
 		fclose(fp);
 		get_multiple_snp_idx(&adt.snp, snp_ids, n_elems, &snp_idx_head, &missing_snp_idx);
+		TAILQ_MERGESORT(&snp_idx_head, idx_head, idx_node, nodes, CMP_IDX);
 		if(IS_VERBOSE) {
 			if(!TAILQ_EMPTY(&missing_snp_idx)) { 
 				struct str_node* tmp_node;
@@ -982,6 +694,7 @@ int main(int argc, char* argv[]) {
 		free(line);
 		fclose(fp);
 		get_multiple_ind_idx(&adt.ind, ind_ids, ind_pops, n_elems, &ind_idx_head_neg, &missing_ind_idx_neg);
+		TAILQ_MERGESORT(&ind_idx_head, idx_head, idx_node, nodes, CMP_IDX);
 		if(IS_VERBOSE) {
 			if(!TAILQ_EMPTY(&missing_ind_idx_neg)) { 
 				struct ind_idx_node* tmp_node;
