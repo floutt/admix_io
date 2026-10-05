@@ -538,6 +538,7 @@ int main(int argc, char* argv[]) {
 	if(population_file) {
 		N_IND_FILT++;
 		TAILQ_INIT(&ind_pop_idx_head);
+		TAILQ_INIT(&missing_ind_pops_idx);
 		size_t n_elems = num_lines(population_file);
 		char** pops = (char**)malloc(sizeof(char*) * n_elems);
 		FILE* fp = fopen(population_file, "r");
@@ -753,6 +754,7 @@ int main(int argc, char* argv[]) {
 	if(population_file_neg) {
 		N_IND_FILT++;
 		TAILQ_INIT(&ind_pop_idx_head_neg);
+		TAILQ_INIT(&missing_ind_pops_idx_neg);
 		size_t n_elems = num_lines(population_file_neg);
 		char** pops = (char**)malloc(sizeof(char*) * n_elems);
 		FILE* fp = fopen(population_file_neg, "r");
