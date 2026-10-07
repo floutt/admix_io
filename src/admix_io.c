@@ -878,7 +878,6 @@ int main(int argc, char* argv[]) {
 		goto_var(&adt.geno, &adt.snp, adt.snp.var_id[idx_snp->idx]);
 		uint8_t* dosages = read_record(&adt.geno);
 		struct idx_node* idx_nxt = TAILQ_NEXT(idx_snp, nodes);
-		struct idx_node* old_val = idx_snp;
 		bool end_while = true;
 		bool removed = false;
 		if((maf_min > 0) || (maf_max < 0.5)) {
